@@ -244,14 +244,14 @@ void list_pump_handler(yed_event *event) {
 
                 //Uninstall
                 case 2:
+                    ran_from_gui = 1;
                     YEXE("ypm-uninstall", plugin_name);
-                    YEXE("ypm-list");
                     break;
 
                 //Update
                 case 3:
+                    ran_from_gui = 1;
                     YEXE("ypm-update", plugin_name);
-                    YEXE("ypm-list");
                     break;
             }
             list_kill_popup();
