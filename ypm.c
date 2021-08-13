@@ -6,6 +6,7 @@ static int                read_cmd_buff;
 static yed_nb_subproc_t   nb_subproc;
 static yed_event_handler  pump_handler;
 static yed_event_handler  ypm_list_handler;
+static yed_event_handler  ypm_man_handler;
 array_t                   plugin_arr;
 char                     *plugin_tmp_name;
 void(*fn)(void);
@@ -46,9 +47,11 @@ static void yed_grab_plugin_names(void);
 void cmd_update_running(void);
 void cmd_pump_handler(yed_event *event);
 void list_pump_handler(yed_event *event);
+void list_hl_line_handler(yed_event *event);
 int set_template_completion(char *name, struct yed_completion_results_t *comp_res);
 void yed_open_buffer_window(char *buff);
 void start_event_handler();
+void ypm_man_event_handler(yed_event *event);
 
 static void ypm_setup(void);
 static void ypm_init(int n_args, char **args);
@@ -57,6 +60,7 @@ static void ypm_help(int n_args, char **args);
 static void ypm_install(int n_args, char **args);
 static void ypm_uninstall(int n_args, char **args);
 static void ypm_update(int n_args, char **args);
+static void ypm_man(int n_args, char **args);
 
 void start_event_handler() {
     cmd_buff_is_running = 0;
@@ -234,6 +238,8 @@ void list_pump_handler(yed_event *event) {
             switch(list_popup.selection) {
                 //Man Page
                 case 0:
+                    ran_from_gui = 1;
+                    YEXE("ypm-man", plugin_name);
                     break;
 
                 //Install
@@ -294,9 +300,27 @@ void cmd_pump_handler(yed_event *event) {
             fn = NULL;
         }
         yed_delete_event_handler(pump_handler);
-        yed_buff_insert_string(cmd_buff, "Done!", yed_buff_n_lines(cmd_buff)+1, 1);
+/*         yed_buff_insert_string(cmd_buff, "Done!", yed_buff_n_lines(cmd_buff)+1, 1); */
         cmd_buff->flags |= BUFF_RD_ONLY;
     }
+}
+
+void ypm_man_event_handler(yed_event *event) {
+    yed_buffer *buff;
+    char       *buffer;
+
+    buff = get_or_make_buffer("ypm-cmd-buff");
+    buff->flags &= ~BUFF_RD_ONLY;
+
+    if ((event->key != ESC)
+    ||  ys->interactive_command
+    ||  !ys->active_frame
+    ||  ys->active_frame->buffer != buff) {
+        return;
+    }
+
+    yed_delete_event_handler(ypm_man_handler);
+    YEXE("ypm-list");
 }
 
 static void yed_run_command_in_background(char *cmd) {
@@ -465,6 +489,7 @@ void yed_open_buffer_window(char *buff) {
 }
 
 int yed_plugin_boot(yed_plugin *self) {
+    yed_event_handler list_hl;
 
     YED_PLUG_VERSION_CHECK();
 
@@ -474,6 +499,7 @@ int yed_plugin_boot(yed_plugin *self) {
     yed_plugin_set_command(self, "ypm-install", ypm_install);
     yed_plugin_set_command(self, "ypm-uninstall", ypm_uninstall);
     yed_plugin_set_command(self, "ypm-update", ypm_update);
+    yed_plugin_set_command(self, "ypm-man", ypm_man);
 
     ypm_self = self;
     ran_from_gui = 0;
@@ -491,7 +517,80 @@ int yed_plugin_boot(yed_plugin *self) {
 
     get_or_make_buffer("ypm-buff");
 
+    list_hl.kind = EVENT_LINE_PRE_DRAW;
+    list_hl.fn   = list_hl_line_handler;
+    yed_plugin_add_event_handler(self, list_hl);
+
+
+
     return 0;
+}
+
+void list_hl_line_handler(yed_event* event) {
+    yed_frame  *frame;
+    yed_buffer *cmd_buff;
+    yed_attrs  *attr;
+    yed_attrs   atn;
+    yed_attrs   atn2;
+    yed_attrs   active;
+    yed_line   *line;
+    int         col;
+    char       *word;
+    char       *word1;
+    char       *pch;
+    char        chk[] = "\xE2\x9C\x93";
+    char        x[] = "X";
+    char       *save;
+    int         comp;
+
+    cmd_buff = get_or_make_buffer("ypm-buff");
+    cmd_buff->flags &= ~BUFF_RD_ONLY;
+    frame = event->frame;
+
+    if (!frame
+    ||  !frame->buffer
+    ||  frame->buffer != cmd_buff) {
+        return;
+    }
+
+    active = yed_active_style_get_active();
+    atn.flags = active.flags;
+    if(atn.flags & ATTR_RGB) {
+        atn.fg = RGB_32(0x0, 0x7f, 0x0);
+    }else{
+        atn.fg = ATTR_16_GREEN;
+    }
+
+    atn2 = yed_active_style_get_attention();
+
+    line = yed_buff_get_line(event->frame->buffer, event->row);
+    word1 = (char *)yed_line_col_to_glyph(line, 1);
+
+    if(word1 == NULL) {
+        return;
+    }
+
+    word = strdup(word1);
+    save = word;
+    pch = strtok(word, " ");
+    comp = 0;
+    while (pch != NULL) {
+        if(strcmp(pch, chk) == 0) {
+            col = abs(save - pch + comp);
+            attr = array_item(event->frame->line_attrs, col);
+            yed_combine_attrs(attr, &atn);
+            attr = array_item(event->frame->line_attrs, col+1);
+            yed_combine_attrs(attr, &atn);
+            attr = array_item(event->frame->line_attrs, col+2);
+            yed_combine_attrs(attr, &atn);
+            comp += 2;
+        }else if(strcmp(pch, x) == 0) {
+            col = abs(save - pch + comp);
+            attr = array_item(event->frame->line_attrs, col);
+            yed_combine_attrs(attr, &atn2);
+        }
+        pch = strtok(NULL, " ");
+    }
 }
 
 void ypm_setup(void) {
@@ -694,6 +793,52 @@ void ypm_install_2(void) {
     if(ran_from_gui) {
         YEXE("ypm-list");
     }
+    ran_from_gui = 0;
+}
+
+void ypm_man(int n_args, char **args) {
+    if(cmd_buff_is_running) {
+        yed_cerr("Can not run two ypm commands at once");
+        return;
+    }
+
+    yed_buffer *ypm_cmd_buff;
+    ypm_cmd_buff = get_or_make_buffer("ypm-cmd-buff");
+    ypm_cmd_buff->flags &= ~BUFF_RD_ONLY;
+    yed_buff_clear(ypm_cmd_buff);
+
+    fn =  NULL;
+    char  cmd1[512];
+    char  tmp[512];
+    char *cmd;
+    char  width[] = "80";
+
+    if(n_args != 1) {
+        yed_cerr("Must have the plugin name");
+        return;
+    }
+
+    plugin_tmp_name = strdup(args[0]);
+
+    cmd = abs_path("~/.yed/ypm/ypm_man.sh", tmp);
+    cmd1[0] = 0;
+    strcat(cmd1, "PLUGIN=");
+    strcat(cmd1, args[0]);
+    strcat(cmd1, " ");
+    strcat(cmd1, "WIDTH=");
+    strcat(cmd1, width);
+    strcat(cmd1, " ");
+    strcat(cmd1, cmd);
+    yed_cerr("%s", cmd1);
+
+    start_event_handler();
+    yed_run_command_in_background(cmd1);
+
+    ypm_man_handler.kind = EVENT_KEY_PRESSED;
+    ypm_man_handler.fn   = ypm_man_event_handler;
+    yed_plugin_add_event_handler(ypm_self, ypm_man_handler);
+
+    yed_open_buffer_window("*ypm-cmd-buff");
     ran_from_gui = 0;
 }
 
