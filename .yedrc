@@ -1,1 +1,0 @@
-hook post-write multi 'shell-run MANWIDTH=80 man -l man.7' 'special-buffer-prepare-unfocus *shell-output'
