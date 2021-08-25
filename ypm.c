@@ -109,6 +109,7 @@ int yed_plugin_boot(yed_plugin *self) {
     char *manpath;
     char  ypm_manpath[4096];
     char  new_manpath[4096];
+    int   ret;
 
     YED_PLUG_VERSION_CHECK();
 
@@ -198,7 +199,12 @@ int yed_plugin_boot(yed_plugin *self) {
         setenv("MANPATH", ypm_manpath, 1);
     } else {
         if (strncmp(manpath, ypm_manpath, strlen(ypm_manpath)) != 0) {
-            snprintf(new_manpath, sizeof(new_manpath), "%s:%s", ypm_manpath, manpath);
+            LOG_CMD_ENTER("ypm");
+            ret = snprintf(new_manpath, sizeof(new_manpath-1), "%s:%s", ypm_manpath, manpath);
+            if(ret < 0) {
+                yed_cerr("item_path was truncated!");
+            }
+            LOG_EXIT();
             setenv("MANPATH", new_manpath, 1);
         }
     }
@@ -423,13 +429,19 @@ static void add_plugin_to_arr(const char *ab_path, const char *rel_path) {
     FILE                                          *f;
     char                                           line[512];
     char                                          *cpy;
+    int                                            ret;
 
     memset(&plug, 0, sizeof(plug));
 
     plug.plugin_name = path_without_ext((char*)rel_path);
 
+    LOG_CMD_ENTER("ypm");
     /* downloaded */
-    snprintf(item_path, sizeof(item_path), "%s/build.sh", ab_path);
+    ret = snprintf(item_path, sizeof(item_path), "%s/build.sh", ab_path);
+    if(ret < 0) {
+        yed_cerr("item_path was truncated!");
+    }
+
     if (stat(item_path, &st) == 0) {
         plug.downloaded = 1;
     }
@@ -437,7 +449,10 @@ static void add_plugin_to_arr(const char *ab_path, const char *rel_path) {
     just_name = get_path_basename(plug.plugin_name);
 
     //compiled
-    snprintf(item_path, sizeof(item_path), "%s/%s.so", ab_path, just_name);
+    ret = snprintf(item_path, sizeof(item_path), "%s/%s.so", ab_path, just_name);
+    if(ret < 0) {
+        yed_cerr("item_path was truncated!");
+    }
     if (stat(item_path, &st) == 0) {
         plug.compiled = 1;
     }
@@ -510,7 +525,7 @@ static void add_plugin_to_arr(const char *ab_path, const char *rel_path) {
     }
 
     array_push(plugin_arr, plug);
-
+    LOG_EXIT();
 }
 
 static void clear_plugin_arr(void) {
@@ -684,6 +699,7 @@ static void draw_list(void) {
     char        dash2_buff[128];
     char        dash3_buff[512];
     char        plugin_line[512];
+    int         ret;
 
     buff      = get_or_make_buffer("ypm-menu");
     start_row = 17;
@@ -732,12 +748,17 @@ static void draw_list(void) {
     dash3_buff[0] = 0;
     for (i = 0; i < col_3_width + 1; i += 1) { strcat(dash3_buff, "─"); }
 
-    snprintf(line_buff, sizeof(line_buff), "%*s┼%*s┼%*s┼%*s┤",
+    LOG_CMD_ENTER("ypm");
+    ret = snprintf(line_buff, sizeof(line_buff), "%*s┼%*s┼%*s┼%*s┤",
                         max_width + 1,   dash1_buff,
                         col_2_width + 2, dash2_buff,
                         col_2_width + 2, dash2_buff,
                         col_3_width + 1, dash3_buff
             );
+    if(ret < 0) {
+        yed_cerr("item_path was truncated!");
+    }
+    LOG_EXIT();
     yed_buff_insert_string_no_undo(buff, line_buff, start_row, 1);
 
     array_traverse(plugs, it) {
