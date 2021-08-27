@@ -88,6 +88,7 @@ static void        do_uninstall(const char *plug_name);
 static void        start_search(void);
 static void        leave_search(void);
 static void        clear_and_leave_search(void);
+static void        check_ypm_version(void);
 
 /* Event handlers: */
 static void pump_handler(yed_event *event);
@@ -113,6 +114,7 @@ int yed_plugin_boot(yed_plugin *self) {
     int   ret;
 
     YED_PLUG_VERSION_CHECK();
+    check_ypm_version();
 
     tasks          = array_make(background_task);
     plugin_arr     = array_make(plugin);
@@ -201,7 +203,7 @@ int yed_plugin_boot(yed_plugin *self) {
     } else {
         if (strncmp(manpath, ypm_manpath, strlen(ypm_manpath)) != 0) {
             LOG_CMD_ENTER("ypm");
-            ret = snprintf(new_manpath, sizeof(new_manpath-1), "%s:%s", ypm_manpath, manpath);
+            ret = snprintf(new_manpath, sizeof(new_manpath)-1, "%s:%s", ypm_manpath, manpath);
             if(ret < 0) {
                 yed_cerr("item_path was truncated!");
             }
@@ -260,7 +262,9 @@ void ypm_uninstall(int n_args, char **args) {
 
 
 
+static void check_ypm_version(void) {
 
+}
 
 static int plug_name_compl(char *str, struct yed_completion_results_t *comp_res){
     int      ret;
@@ -1380,7 +1384,6 @@ LOG_CMD_ENTER("ypm");
         switch (event->key) {
             case 'm':
                 if (popup.is_up) { kill_popup(); }
-                YEXE("special-buffer-prepare-unfocus", "*ypm-menu");
                 open_man_page("ypm");
                 from_menu     = 1;
                 event->cancel = 1;
