@@ -87,6 +87,7 @@ static void        uninstall_callback(void *arg);
 static void        do_uninstall(const char *plug_name);
 static void        start_search(void);
 static void        leave_search(void);
+static void        clear_and_leave_search(void);
 
 /* Event handlers: */
 static void pump_handler(yed_event *event);
@@ -1365,7 +1366,6 @@ LOG_CMD_ENTER("ypm");
             if (event->key == ESC) {
                 clear_and_leave_search();
                 draw_list();
-                internal_mod_on(get_or_make_buffer("ypm-menu"));
                 event->cancel = 1;
             } else if (event->key == ENTER) {
                 leave_search();
@@ -1442,8 +1442,8 @@ LOG_CMD_ENTER("ypm");
             case ESC:
                 if (popup.is_up) {
                     kill_popup();
+                    event->cancel = 1;
                 }
-                event->cancel = 1;
                 break;
         }
     } else if (ys->active_frame->buffer == get_or_make_buffer("ypm-output")
