@@ -32,6 +32,8 @@ typedef struct {
     int    exit_code;
 } background_task;
 
+static yed_plugin       *SELF;
+static int               reload;
 static char              update_script_path[256];
 static char              install_script_path[256];
 static char              uninstall_script_path[256];
@@ -49,21 +51,21 @@ static yed_event_handler h_key;
 static yed_event_handler h_pre_mod;
 static yed_event_handler h_post_mod;
 static menu_popup_t      popup;
+static menu_popup_t      popup_sm;
 static int               from_menu;
 static int               plug_row;
 static array_t           popup_items;
+static array_t           popup_items_sm;
 static int               in_search;
 static int               has_search;
 
 
 /* User facing commands: */
-static void ypm_update(int n_args, char **args);
 static void ypm_menu(int n_args, char **args);
 static void ypm_help(int n_args, char **args);
 static void ypm_install(int n_args, char **args);
 static void ypm_uninstall(int n_args, char **args);
 static void ypm_update(int n_args, char **args);
-
 
 /* Internal functions: */
 static int         plug_name_compl(char *str, struct yed_completion_results_t *comp_res);
@@ -106,6 +108,7 @@ static void unload(yed_plugin *self);
 
 int yed_plugin_boot(yed_plugin *self) {
     char *item;
+    int   reload = 0;
     int   manpath_len;
     int   manpath_status;
     char *manpath;
@@ -114,6 +117,7 @@ int yed_plugin_boot(yed_plugin *self) {
     int   ret;
 
     YED_PLUG_VERSION_CHECK();
+    SELF = self;
     check_ypm_version();
 
     tasks          = array_make(background_task);
@@ -131,7 +135,7 @@ int yed_plugin_boot(yed_plugin *self) {
     item = "Man Page";  array_push(popup_items, item);
     item = "Install";   array_push(popup_items, item);
     item = "Uninstall"; array_push(popup_items, item);
-    item = "Update";    array_push(popup_items, item);
+/*     item = "Update";    array_push(popup_items, item); */
     item = "Load";      array_push(popup_items, item);
     item = "Unload";    array_push(popup_items, item);
 
@@ -183,7 +187,6 @@ int yed_plugin_boot(yed_plugin *self) {
     yed_plugin_set_command(self, "ypm-help",      ypm_help);
     yed_plugin_set_command(self, "ypm-install",   ypm_install);
     yed_plugin_set_command(self, "ypm-uninstall", ypm_uninstall);
-    yed_plugin_set_command(self, "ypm-update",    ypm_update);
 
     yed_plugin_set_completion(self, "ypm-install-compl-arg-0",   plug_name_compl);
     yed_plugin_set_completion(self, "ypm-uninstall-compl-arg-0", plug_name_compl);
@@ -215,6 +218,13 @@ int yed_plugin_boot(yed_plugin *self) {
     if (manpath != NULL) { free(manpath); }
 
     return 0;
+}
+
+void ypm_require(int n_args, char **args) {
+    if (n_args != 1) {
+        yed_cerr("expected 1 argument, but got %d", n_args);
+        return;
+    }
 }
 
 void ypm_update(int n_args, char **args) {
@@ -263,7 +273,101 @@ void ypm_uninstall(int n_args, char **args) {
 
 
 static void check_ypm_version(void) {
+    char  readme_path[512];
+    char  line[512];
+    char *s;
+    char *item;
+    FILE *f;
+    int   version;
 
+    abs_path("~/.yed/ypm/README.md", readme_path);
+
+    f = fopen(readme_path, "r");
+    if (f != NULL) {
+        if (fgets(line, sizeof(line), f) != NULL) {
+            if (fgets(line, sizeof(line), f) != NULL) {
+                strtok(line, " ");
+                strtok(NULL, " ");
+                s = strtok(NULL, "\n");
+                version = atoi(s);
+            }
+        }
+        fclose(f);
+    }
+
+    yed_direct_draw_t  *dd;
+    yed_direct_draw_t **dd_it;
+    yed_attrs           active;
+    yed_attrs           assoc;
+    yed_attrs           merged;
+    yed_attrs           merged_inv;
+    char              **it;
+    int                 max_width;
+    int                 has_left_space;
+    int                 i;
+    char                buff[512];
+
+    if ((YED_VERSION / 100)  != (version / 100)) {
+        popup_items_sm = array_make(char*);
+        item           = "YPM is out of date. Would you like to update it?";  array_push(popup_items_sm, item);
+        item           = "Hit ENTER for Yes";                                 array_push(popup_items_sm, item);
+        item           = "Hit ESC for No";                                    array_push(popup_items_sm, item);
+
+        if (!popup_sm.is_up) {
+
+            free_string_array(popup_sm.strings);
+
+            array_traverse(popup_sm.dds, dd_it) {
+                yed_kill_direct_draw(*dd_it);
+            }
+
+            array_free(popup_sm.dds);
+
+            popup_sm.frame = NULL;
+
+            popup_sm.is_up = 0;
+        }
+
+        popup_sm.strings   = copy_string_array(popup_items_sm);
+        popup_sm.dds       = array_make(yed_direct_draw_t*);
+        popup_sm.start_len = 0;
+        popup_sm.selection = 0;
+
+
+        array_traverse(popup_sm.dds, dd_it) {
+            yed_kill_direct_draw(*dd_it);
+        }
+        array_free(popup_sm.dds);
+
+        popup_sm.dds = array_make(yed_direct_draw_t*);
+
+        active = yed_active_style_get_active();
+        assoc  = yed_active_style_get_associate();
+        merged = active;
+        yed_combine_attrs(&merged, &assoc);
+        merged_inv = merged;
+        merged_inv.flags ^= ATTR_INVERSE;
+
+        max_width = 0;
+        array_traverse(popup_sm.strings, it) {
+            max_width = MAX(max_width, strlen(*it));
+        }
+
+        i              = 1;
+        has_left_space = 0;
+
+        array_traverse(popup_sm.strings, it) {
+            snprintf(buff, sizeof(buff), "%s%*s ", has_left_space ? " " : "", -max_width, *it);
+            dd = yed_direct_draw((ys->term_rows/2) + i,
+                                (ys->term_cols/2) -20 - 1 - has_left_space,
+                                i == popup_sm.selection + 1 ? merged_inv : merged,
+                                buff);
+            array_push(popup_sm.dds, dd);
+            i += 1;
+        }
+
+        popup_sm.is_up = 1;
+    }
 }
 
 static int plug_name_compl(char *str, struct yed_completion_results_t *comp_res){
@@ -820,8 +924,16 @@ static void draw_menu(void) {
 }
 
 static void update_callback(void *arg) {
+    plugin *pit;
+
     YEXE("echo", "update finished");
     draw_list();
+
+    array_traverse(plugin_arr, pit) {
+        if (pit->installed) {
+            YEXE("ypm-install", pit->plugin_name);
+        }
+    }
 }
 
 static void do_update(void) {
@@ -1160,6 +1272,7 @@ static void unload(yed_plugin *self) {
     array_free(plugin_arr);
     free_string_array(listed_plugins);
     array_free(popup_items);
+    array_free(popup_items_sm);
 
     yed_free_buffer(get_or_make_buffer("ypm-output"));
     yed_free_buffer(get_or_make_buffer("ypm-menu"));
@@ -1356,9 +1469,36 @@ static void cursor_pre_move_handler(yed_event *event) {
 
 static void key_handler(yed_event *event) {
     yed_line *line;
-    char     *s;
-    char      plug_name[256];
-    int       i;
+    char               *s;
+    char                plug_name[256];
+    int                 i;
+    yed_direct_draw_t **dd_it;
+
+    if (popup_sm.is_up) {
+        event->cancel = 1;
+        reload = 0;
+        if (event->key == ENTER) {
+            YEXE("ypm-update");
+            reload = 1;
+        } else if(event->key == ESC) {
+            ys->redraw_cls = 1;
+            yed_plugin_uninstall_features(SELF);
+        } else {
+            return;
+        }
+
+        free_string_array(popup_sm.strings);
+
+        array_traverse(popup_sm.dds, dd_it) {
+            yed_kill_direct_draw(*dd_it);
+        }
+        array_free(popup_sm.dds);
+
+        popup_sm.frame = NULL;
+        popup_sm.is_up = 0;
+
+        return;
+    }
 
     if (ys->interactive_command != NULL
     ||  ys->active_frame == NULL) { return; }
@@ -1421,15 +1561,15 @@ LOG_CMD_ENTER("ypm");
                             plug_row = ys->active_frame->cursor_line;
                             do_uninstall(plug_name);
                             break;
+/*                         case 3: */
+/*                             from_menu = 1; */
+/*                             plug_row = ys->active_frame->cursor_line; */
+/*                             do_update(); */
+/*                             break; */
                         case 3:
-                            from_menu = 1;
-                            plug_row = ys->active_frame->cursor_line;
-                            do_update();
-                            break;
-                        case 4:
                             YEXE("plugin-load", plug_name);
                             break;
-                        case 5:
+                        case 4:
                             YEXE("plugin-unload", plug_name);
                             break;
                     }
