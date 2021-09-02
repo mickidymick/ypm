@@ -21,7 +21,6 @@ typedef struct plugin_t {
     char   *plugin_description;
     char   *version;
     char   *plugin_name;
-    int     show;
     array_t keywords;
 } plugin;
 
@@ -33,7 +32,6 @@ typedef struct {
 } background_task;
 
 static yed_plugin       *SELF;
-static int               reload;
 static char              update_script_path[256];
 static char              install_script_path[256];
 static char              uninstall_script_path[256];
@@ -51,13 +49,18 @@ static yed_event_handler h_key;
 static yed_event_handler h_pre_mod;
 static yed_event_handler h_post_mod;
 static menu_popup_t      popup;
-static menu_popup_t      popup_sm;
 static int               from_menu;
 static int               plug_row;
 static array_t           popup_items;
 static array_t           popup_items_sm;
 static int               in_search;
 static int               has_search;
+static int               cursor_no_recurse;
+static int               mod_norecurse;
+static int               list_len;
+static array_t           update_dds;
+static int               update_menu_is_up;
+
 
 
 /* User facing commands: */
@@ -108,7 +111,6 @@ static void unload(yed_plugin *self);
 
 int yed_plugin_boot(yed_plugin *self) {
     char *item;
-    int   reload = 0;
     int   manpath_len;
     int   manpath_status;
     char *manpath;
@@ -271,14 +273,81 @@ void ypm_uninstall(int n_args, char **args) {
 }
 
 
+void create_update_menu(int version) {
+    yed_attrs          attrs;
+    int                width;
+    char               buff[256];
+    const char        *msg1;
+    char               msg2[256];
+    const char        *msg3;
+    yed_direct_draw_t *dd;
+
+    update_dds = array_make(yed_direct_draw_t*);
+
+    attrs = yed_active_style_get_active();
+    attrs.flags ^= ATTR_INVERSE;
+    width = 48;
+    memset(buff, 0, sizeof(buff));
+    memset(buff, ' ', width);
+
+    memset(buff, ' ', width);
+    dd = yed_direct_draw((ys->term_rows / 2) - 3, (ys->term_cols / 2) - (width / 2),
+                         attrs, buff);
+    array_push(update_dds, dd);
+
+    msg1 =
+version ? "YPM is out of date." : "YPM has not been initialized.";
+    memset(buff, ' ', width);
+    memcpy(buff + (width / 2) - (strlen(msg1) / 2), msg1, strlen(msg1));
+    dd = yed_direct_draw((ys->term_rows / 2) - 2, (ys->term_cols / 2) - (width / 2),
+                         attrs, buff);
+    array_push(update_dds, dd);
+
+    memset(buff, ' ', width);
+    dd = yed_direct_draw((ys->term_rows / 2) - 1, (ys->term_cols / 2) - (width / 2),
+                         attrs, buff);
+    array_push(update_dds, dd);
+
+        snprintf(msg2, sizeof(msg2),
+"(yed version: %d  vs  YPM version %d)", YED_VERSION, version);
+
+    memset(buff, ' ', width);
+    memcpy(buff + (width / 2) - (strlen(msg2) / 2), msg2, strlen(msg2));
+    dd = yed_direct_draw((ys->term_rows / 2) + 0, (ys->term_cols / 2) - (width / 2),
+                         attrs, buff);
+    array_push(update_dds, dd);
+
+    memset(buff, ' ', width);
+    dd = yed_direct_draw((ys->term_rows / 2) + 1, (ys->term_cols / 2) - (width / 2),
+                         attrs, buff);
+    array_push(update_dds, dd);
+
+    msg3 =
+"Would you like to update? [y/n]";
+    memset(buff, ' ', width);
+    memcpy(buff + (width / 2) - (strlen(msg3) / 2), msg3, strlen(msg3));
+    dd = yed_direct_draw((ys->term_rows / 2) + 2, (ys->term_cols / 2) - (width / 2),
+                         attrs, buff);
+    array_push(update_dds, dd);
+
+    memset(buff, ' ', width);
+    dd = yed_direct_draw((ys->term_rows / 2) + 3, (ys->term_cols / 2) - (width / 2),
+                         attrs, buff);
+    array_push(update_dds, dd);
+
+    update_menu_is_up = 1;
+}
+
 
 static void check_ypm_version(void) {
+    int   version;
     char  readme_path[512];
     char  line[512];
     char *s;
     char *item;
     FILE *f;
-    int   version;
+
+    version = 0;
 
     abs_path("~/.yed/ypm/README.md", readme_path);
 
@@ -295,78 +364,8 @@ static void check_ypm_version(void) {
         fclose(f);
     }
 
-    yed_direct_draw_t  *dd;
-    yed_direct_draw_t **dd_it;
-    yed_attrs           active;
-    yed_attrs           assoc;
-    yed_attrs           merged;
-    yed_attrs           merged_inv;
-    char              **it;
-    int                 max_width;
-    int                 has_left_space;
-    int                 i;
-    char                buff[512];
-
-    if ((YED_VERSION / 100)  != (version / 100)) {
-        popup_items_sm = array_make(char*);
-        item           = "YPM is out of date. Would you like to update it?";  array_push(popup_items_sm, item);
-        item           = "Hit ENTER for Yes";                                 array_push(popup_items_sm, item);
-        item           = "Hit ESC for No";                                    array_push(popup_items_sm, item);
-
-        if (!popup_sm.is_up) {
-
-            free_string_array(popup_sm.strings);
-
-            array_traverse(popup_sm.dds, dd_it) {
-                yed_kill_direct_draw(*dd_it);
-            }
-
-            array_free(popup_sm.dds);
-
-            popup_sm.frame = NULL;
-
-            popup_sm.is_up = 0;
-        }
-
-        popup_sm.strings   = copy_string_array(popup_items_sm);
-        popup_sm.dds       = array_make(yed_direct_draw_t*);
-        popup_sm.start_len = 0;
-        popup_sm.selection = 0;
-
-
-        array_traverse(popup_sm.dds, dd_it) {
-            yed_kill_direct_draw(*dd_it);
-        }
-        array_free(popup_sm.dds);
-
-        popup_sm.dds = array_make(yed_direct_draw_t*);
-
-        active = yed_active_style_get_active();
-        assoc  = yed_active_style_get_associate();
-        merged = active;
-        yed_combine_attrs(&merged, &assoc);
-        merged_inv = merged;
-        merged_inv.flags ^= ATTR_INVERSE;
-
-        max_width = 0;
-        array_traverse(popup_sm.strings, it) {
-            max_width = MAX(max_width, strlen(*it));
-        }
-
-        i              = 1;
-        has_left_space = 0;
-
-        array_traverse(popup_sm.strings, it) {
-            snprintf(buff, sizeof(buff), "%s%*s ", has_left_space ? " " : "", -max_width, *it);
-            dd = yed_direct_draw((ys->term_rows/2) + i,
-                                (ys->term_cols/2) -20 - 1 - has_left_space,
-                                i == popup_sm.selection + 1 ? merged_inv : merged,
-                                buff);
-            array_push(popup_sm.dds, dd);
-            i += 1;
-        }
-
-        popup_sm.is_up = 1;
+    if ((YED_VERSION / 100) != (version / 100)) {
+        create_update_menu(version);
     }
 }
 
@@ -580,13 +579,14 @@ static void add_plugin_to_arr(const char *ab_path, const char *rel_path) {
         plug.loaded = 1;
     }
 
-    //show
-    plug.show = 1;
-
     //version / keywords
     plug.keywords = array_make(char *);
     abs_path("~/.yed/ypm/man/man7", man_dir_path);
-    snprintf(name_copy, sizeof(name_copy), "%s", plug.plugin_name);
+    if (strncmp(plug.plugin_name, "styles/", strlen("styles/")) == 0) {
+        snprintf(name_copy, sizeof(name_copy), "style-%s", plug.plugin_name + strlen("styles/"));
+    } else {
+        snprintf(name_copy, sizeof(name_copy), "%s", plug.plugin_name);
+    }
     s = name_copy;
     while (*s) { if (*s == '/') { *s = '-'; } s += 1; }
     snprintf(man_path, sizeof(man_path), "%s/%s.7", man_dir_path, name_copy);
@@ -735,6 +735,7 @@ static void load_all_from_list(void) {
             if (line[strlen(line)-1] == '\n') {
                 line[strlen(line)-1] = 0;
             }
+            if (strlen(line) == 0) { continue; }
             s = strdup(line);
             array_push(plugs, s);
         }
@@ -813,6 +814,7 @@ static void draw_list(void) {
     buff      = get_or_make_buffer("ypm-menu");
     start_row = 17;
 
+    mod_norecurse = 1;
     internal_mod_on(buff);
 
     while (yed_buff_n_lines(buff) >= start_row) {
@@ -886,9 +888,15 @@ static void draw_list(void) {
         yed_buff_insert_string_no_undo(buff, plugin_line, start_row, 1);
     }
 
-    yed_buffer_add_line_no_undo(buff);
+    list_len = array_len(plugs);
+
+/*     if (list_len == 0) { */
+        yed_buffer_add_line_no_undo(buff);
+/*     } */
 
     internal_mod_off(buff);
+    mod_norecurse = 0;
+
 
     array_free(plugs);
 }
@@ -910,6 +918,7 @@ static void draw_menu(void) {
 
     buff = get_or_make_buffer("ypm-menu");
 
+    mod_norecurse = 1;
     internal_mod_on(buff);
 
     yed_buff_clear_no_undo(buff);
@@ -919,6 +928,7 @@ static void draw_menu(void) {
     yed_buff_insert_string_no_undo(buff, "search:", yed_buff_n_lines(buff) + 2, 1);
 
     internal_mod_off(buff);
+    mod_norecurse = 0;
 
     draw_list();
 }
@@ -1219,6 +1229,8 @@ static void start_search(void) {
     yed_line   *line;
     int         returning;
 
+    if (in_search) { return; }
+
     buff = get_or_make_buffer("ypm-menu");
     line = yed_buff_get_line(buff, 15);
     if (line == NULL) { return; }
@@ -1233,30 +1245,51 @@ static void start_search(void) {
         returning = 0;
     }
 
+    if (ys->active_frame != NULL
+    &&  ys->active_frame->buffer == buff) {
+        cursor_no_recurse = 1;
+        yed_set_cursor_within_frame(ys->active_frame, 1, 1);
+        cursor_no_recurse = 0;
+    }
+
     in_search = has_search = 1;
+
     if (ys->active_frame != NULL
     &&  ys->active_frame->buffer == buff) {
         yed_set_cursor_within_frame(ys->active_frame, 15, returning ? 999 : 1);
     }
 }
 
+static void go_first_line(void) {
+/*     internal_mod_on(get_or_make_buffer("ypm-menu")); */
+/*     while (yed_buff_n_lines(get_or_make_buffer("ypm-menu")) < 19) { */
+/*         yed_buffer_add_line_no_undo(get_or_make_buffer("ypm-menu")); */
+/*     } */
+/*     internal_mod_off(get_or_make_buffer("ypm-menu")); */
+    cursor_no_recurse = 1;
+    yed_set_cursor_within_frame(ys->active_frame, 19, 1);
+    cursor_no_recurse = 0;
+}
+
 static void leave_search(void) {
+    if (!in_search) { return; }
     in_search = 0;
     internal_mod_off(get_or_make_buffer("ypm-menu"));
     if (ys->active_frame != NULL
     &&  ys->active_frame->buffer == get_or_make_buffer("ypm-menu")) {
-        yed_set_cursor_within_frame(ys->active_frame, 19, 1);
+        go_first_line();
     }
 }
 
 static void clear_and_leave_search(void) {
+    if (!in_search) { return; }
     in_search = 0;
     yed_line_clear_no_undo(get_or_make_buffer("ypm-menu"), 15);
     yed_buff_insert_string_no_undo(get_or_make_buffer("ypm-menu"), "search:", 15, 1);
     internal_mod_off(get_or_make_buffer("ypm-menu"));
     if (ys->active_frame != NULL
     &&  ys->active_frame->buffer == get_or_make_buffer("ypm-menu")) {
-        yed_set_cursor_within_frame(ys->active_frame, 19, 1);
+        go_first_line();
     }
     has_search = 0;
 }
@@ -1426,7 +1459,6 @@ static void row_handler(yed_event *event) {
 }
 
 
-static int cursor_no_recurse;
 static void cursor_pre_move_handler(yed_event *event) {
     if (event->frame->buffer != get_or_make_buffer("ypm-menu")) {
         leave_search();
@@ -1454,48 +1486,54 @@ static void cursor_pre_move_handler(yed_event *event) {
         }
 
         if (event->new_row < 19) {
+            if (event->frame->buffer_y_offset > 0) {
+                cursor_no_recurse = 1;
+                yed_set_cursor_within_frame(event->frame, event->frame->buffer_y_offset + event->frame->scroll_off, 1);
+                cursor_no_recurse = 0;
+            }
             cursor_no_recurse = 1;
             yed_set_cursor_within_frame(event->frame, 19, event->new_col);
             cursor_no_recurse = 0;
             event->cancel = 1;
         } else if (event->new_row >= yed_buff_n_lines(get_or_make_buffer("ypm-menu"))) {
             cursor_no_recurse = 1;
-            yed_set_cursor_within_frame(event->frame, yed_buff_n_lines(get_or_make_buffer("ypm-menu")) - 1, event->new_col);
+            yed_set_cursor_within_frame(event->frame, yed_buff_n_lines(get_or_make_buffer("ypm-menu")) - (list_len > 0), event->new_col);
             cursor_no_recurse = 0;
             event->cancel = 1;
         }
     }
 }
 
+
 static void key_handler(yed_event *event) {
+    yed_direct_draw_t **dit;
     yed_line *line;
     char               *s;
     char                plug_name[256];
     int                 i;
     yed_direct_draw_t **dd_it;
 
-    if (popup_sm.is_up) {
+    if (update_menu_is_up) {
         event->cancel = 1;
-        reload = 0;
-        if (event->key == ENTER) {
+        if (event->key == 'y' || event->key == 'Y') {
+            update_menu_is_up = 0;
+            array_traverse(update_dds, dit) {
+                yed_kill_direct_draw(*dit);
+            }
+            array_free(update_dds);
+            ys->redraw_cls = 1;
             YEXE("ypm-update");
-            reload = 1;
-        } else if(event->key == ESC) {
+        } else if(event->key == 'n' || event->key == 'N') {
+            update_menu_is_up = 0;
+            array_traverse(update_dds, dit) {
+                yed_kill_direct_draw(*dit);
+            }
+            array_free(update_dds);
             ys->redraw_cls = 1;
             yed_plugin_uninstall_features(SELF);
-        } else {
-            return;
+            yed_free_buffer(get_or_make_buffer("ypm-menu"));
+            yed_free_buffer(get_or_make_buffer("ypm-output"));
         }
-
-        free_string_array(popup_sm.strings);
-
-        array_traverse(popup_sm.dds, dd_it) {
-            yed_kill_direct_draw(*dd_it);
-        }
-        array_free(popup_sm.dds);
-
-        popup_sm.frame = NULL;
-        popup_sm.is_up = 0;
 
         return;
     }
@@ -1518,8 +1556,7 @@ LOG_CMD_ENTER("ypm");
             return;
         }
 
-        if (ys->active_frame->cursor_line < 19
-        ||  ys->active_frame->cursor_line == yed_buff_n_lines(get_or_make_buffer("ypm-menu"))) { return; }
+        if (ys->active_frame->cursor_line < 19) { return; }
 
         switch (event->key) {
             case 'm':
@@ -1574,11 +1611,16 @@ LOG_CMD_ENTER("ypm");
                             break;
                     }
                 } else {
-                    popup.row        = ys->active_frame->cur_y;
-                    popup.size       = array_len(popup_items);
-                    popup.cursor_row = ys->active_frame->cursor_line - 1;
-                    popup.cursor_col = ys->active_frame->cursor_col;
-                    start_popup(ys->active_frame, 0, popup_items);
+                    if (list_len > 0) {
+                        popup.size = array_len(popup_items);
+                        if (ys->active_frame->cur_y + popup.size > ys->term_rows - 2) {
+                            popup.row = ys->active_frame->cur_y - popup.size - 1;
+                        } else {
+                            popup.row = ys->active_frame->cur_y;
+                        }
+                        popup.cursor_col = ys->active_frame->cursor_col;
+                        start_popup(ys->active_frame, 0, popup_items);
+                    }
                 }
                 event->cancel = 1;
                 break;
@@ -1606,7 +1648,6 @@ LOG_CMD_ENTER("ypm");
 LOG_EXIT();
 }
 
-static int mod_norecurse;
 static void pre_mod_handler(yed_event *event) {
     if (mod_norecurse) { return; }
     if (event->buffer != get_or_make_buffer("ypm-menu")) { return; }
@@ -1634,7 +1675,7 @@ static void pre_mod_handler(yed_event *event) {
 static void post_mod_handler(yed_event *event) {
     if (mod_norecurse) { return; }
     if (event->buffer != get_or_make_buffer("ypm-menu")) { return; }
-    if (!in_search) { return; }
+/*     if (!in_search) { return; } */
 
     if (event->row == 15) {
         mod_norecurse = 1;
