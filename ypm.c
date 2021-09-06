@@ -400,10 +400,12 @@ static const char *update_script =
 "    else\n"
 "        mkdir ~/.yed/ypm/plugins\n"
 "        echo \"Cloned plugins repo.\"\n"
+"        echo \"Done.\"\n"
 "    fi\n"
 "else\n"
 "    cd ~/.yed/ypm\n"
-"    git pull\n"
+"    git pull || exit $?\n"
+"    echo \"Done.\"\n"
 "fi\n";
 
 static const char *install_script =
