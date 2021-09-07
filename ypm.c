@@ -38,7 +38,6 @@ static char              uninstall_script_path[256];
 static char              upgrade_script_path[256];
 static array_t           tasks;
 static array_t           plugin_arr;
-static array_t           listed_plugins;
 static yed_event_handler h_pump;
 static yed_event_handler h_plug_load;
 static yed_event_handler h_plug_unload;
@@ -124,7 +123,6 @@ int yed_plugin_boot(yed_plugin *self) {
 
     tasks          = array_make(background_task);
     plugin_arr     = array_make(plugin);
-    listed_plugins = array_make(char*);
     popup_items    = array_make(char*);
 
     yed_plugin_set_unload_fn(self, unload);
@@ -522,12 +520,11 @@ static int pop_bg_task(background_task *task) {
     return 1;
 }
 
-static void add_plugin_to_arr(const char *ab_path, const char *rel_path) {
+static void add_plugin_to_arr(const char *ab_path, const char *rel_path, int installed) {
     plugin                                         plug;
     char                                           item_path[4096];
     struct stat                                    st;
     const char                                    *just_name;
-    char                                         **lit;
     tree_it(yed_plugin_name_t, yed_plugin_ptr_t)   pit;
     char                                           man_dir_path[2048];
     char                                           man_path[4096];
@@ -565,12 +562,7 @@ static void add_plugin_to_arr(const char *ab_path, const char *rel_path) {
     }
 
     //installed
-    array_traverse(listed_plugins, lit) {
-        if(strcmp(*lit, plug.plugin_name) == 0) {
-            plug.installed = 1;
-            break;
-        }
-    }
+    plug.installed = installed;
 
     //loaded
     snprintf(line, sizeof(line), "ypm/plugins/%s", plug.plugin_name);
@@ -650,30 +642,33 @@ static void clear_plugin_arr(void) {
 }
 
 static void fill_plugin_arr(void) {
-    char    path[4096];
-    FILE   *f;
-    char    line[512];
-    char   *cpy;
-    char    plug_path[2048];
-    char   *s;
-    char    plug_full_path[4096];
+    array_t   listed_plugins;
+    char      path[4096];
+    FILE     *f;
+    char      line[512];
+    char     *cpy;
+    char      plug_path[2048];
+    char     *s;
+    int       installed;
+    char    **lit;
+    char      plug_full_path[4096];
 
-    free_string_array(listed_plugins);
     listed_plugins = array_make(char*);
 
-    abs_path("~/.yed/ypm/ypm_list", path);
+    abs_path("~/.yed/ypm_list", path);
     f = fopen(path, "r");
 
-    if (f == NULL) { return; }
+    if (f != NULL) {
+        while (fgets(line, sizeof(line), f) != NULL) {
+            if (*line && line[strlen(line) - 1] == '\n') {
+                line[strlen(line) - 1] = 0;
+            }
+            if (strlen(line) == 0) { continue; }
 
-    while (fgets(line, sizeof(line), f) != NULL) {
-        if (*line && line[strlen(line) - 1] == '\n') {
-            line[strlen(line) - 1] = 0;
+            cpy = strdup(line);
+            array_push(listed_plugins, cpy);
         }
-        if (strlen(line) == 0) { continue; }
-
-        cpy = strdup(line);
-        array_push(listed_plugins, cpy);
+        fclose(f);
     }
 
 
@@ -682,24 +677,33 @@ static void fill_plugin_arr(void) {
     abs_path("~/.yed/ypm/.gitmodules", path);
     f = fopen(path, "r");
 
-    if (f == NULL) { return; }
+    if (f != NULL) {
+        while (fgets(line, sizeof(line), f) != NULL) {
+            if (strncmp(line, "[submodule", strlen("[submodule")) != 0) { continue; }
+            if (sscanf(line, "[submodule \"ypm_plugins/%s", plug_path)) {
+                s = plug_path;
+                while (*s && *s != '"') { s += 1; } *s = 0;
 
+                abs_path("~/.yed/ypm/ypm_plugins", plug_full_path);
+                strcat(plug_full_path, "/");
+                strcat(plug_full_path, plug_path);
 
-    while (fgets(line, sizeof(line), f) != NULL) {
-        if (strncmp(line, "[submodule", strlen("[submodule")) != 0) { continue; }
-        if (sscanf(line, "[submodule \"ypm_plugins/%s", plug_path)) {
-            s = plug_path;
-            while (*s && *s != '"') { s += 1; } *s = 0;
+                installed = 0;
+                array_traverse(listed_plugins, lit) {
+                    if (strcmp(plug_path, *lit) == 0) {
+                        installed = 1;
+                        break;
+                    }
+                }
 
-            abs_path("~/.yed/ypm/ypm_plugins", plug_full_path);
-            strcat(plug_full_path, "/");
-            strcat(plug_full_path, plug_path);
-
-            add_plugin_to_arr(plug_full_path, plug_path);
+                add_plugin_to_arr(plug_full_path, plug_path, installed);
+            }
         }
+
+        fclose(f);
     }
 
-    fclose(f);
+    free_string_array(listed_plugins);
 }
 
 static yed_buffer *get_or_make_buffer(char *buff_name) {
@@ -747,7 +751,7 @@ static void load_all_from_list(void) {
 
     plugs = array_make(char*);
 
-    abs_path("~/.yed/ypm/ypm_list", path);
+    abs_path("~/.yed/ypm_list", path);
     f = fopen(path, "r");
 
     if (f != NULL) {
@@ -998,6 +1002,8 @@ static void update_callback(void *_arg) {
     char                buff[512];
     update_install_arg *arg;
 
+    draw_list();
+
     doing_install = 0;
     update_count  = 0;
     array_traverse(plugin_arr, pit) {
@@ -1016,7 +1022,6 @@ static void update_callback(void *_arg) {
 LOG_CMD_ENTER("ypm");
         yed_cprint("update finished");
 LOG_EXIT();
-        draw_list();
         YEXE("buffer", "*ypm-menu");
     }
 }
@@ -1047,7 +1052,7 @@ static void install_callback(void *arg) {
 
     plugs = array_make(char*);
 
-    abs_path("~/.yed/ypm/ypm_list", path);
+    abs_path("~/.yed/ypm_list", path);
     f = fopen(path, "r");
 
     if (f != NULL) {
@@ -1110,7 +1115,7 @@ static void uninstall_callback(void *arg) {
 
     plugs = array_make(char*);
 
-    abs_path("~/.yed/ypm/ypm_list", path);
+    abs_path("~/.yed/ypm_list", path);
     f = fopen(path, "r");
 
     if (f != NULL) {
@@ -1373,7 +1378,6 @@ static void unload(yed_plugin *self) {
     array_free(tasks);
     array_traverse(plugin_arr, pit) { free_plugin(pit); }
     array_free(plugin_arr);
-    free_string_array(listed_plugins);
     array_free(popup_items);
     array_free(popup_items_sm);
 
@@ -1585,6 +1589,8 @@ static void key_handler(yed_event *event) {
     int                 i;
     yed_direct_draw_t **dd_it;
 
+    if (ys->interactive_command != NULL) { return; }
+
     if (update_menu_is_up) {
         event->cancel = 1;
         if (event->key == 'y' || event->key == 'Y') {
@@ -1610,8 +1616,7 @@ static void key_handler(yed_event *event) {
         return;
     }
 
-    if (ys->interactive_command != NULL
-    ||  ys->active_frame == NULL) { return; }
+    if (ys->active_frame == NULL) { return; }
 
 LOG_CMD_ENTER("ypm");
 
