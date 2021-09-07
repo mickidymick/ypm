@@ -131,13 +131,9 @@ int yed_plugin_boot(yed_plugin *self) {
 
     setup_shell_scripts();
 
-    YEXE("plugins-add-dir", "~/.yed/ypm/plugins");
-    YEXE("plugins-add-dir", "~/.yed");
-
     item = "Man Page";  array_push(popup_items, item);
     item = "Install";   array_push(popup_items, item);
     item = "Uninstall"; array_push(popup_items, item);
-/*     item = "Update";    array_push(popup_items, item); */
     item = "Load";      array_push(popup_items, item);
     item = "Unload";    array_push(popup_items, item);
 
@@ -271,6 +267,7 @@ void ypm_uninstall(int n_args, char **args) {
 
     do_uninstall(args[0]);
 }
+
 
 
 void create_update_menu(int version) {
@@ -576,13 +573,16 @@ static void add_plugin_to_arr(const char *ab_path, const char *rel_path) {
     }
 
     //loaded
-    pit = tree_lookup(ys->plugins, plug.plugin_name);
+    snprintf(line, sizeof(line), "ypm/plugins/%s", plug.plugin_name);
+    pit = tree_lookup(ys->plugins, line);
     if (tree_it_good(pit)) {
         plug.loaded = 1;
     }
 
     //version / keywords
     plug.keywords = array_make(char *);
+    s = strdup(plug.plugin_name);
+    array_push(plug.keywords, s);
     abs_path("~/.yed/ypm/man/man7", man_dir_path);
     if (strncmp(plug.plugin_name, "styles/", strlen("styles/")) == 0) {
         snprintf(name_copy, sizeof(name_copy), "style-%s", plug.plugin_name + strlen("styles/"));
@@ -719,6 +719,24 @@ static yed_buffer *get_or_make_buffer(char *buff_name) {
     return buff;
 }
 
+
+static void do_plugin_load(char *name) {
+    char name_buff[512];
+
+    snprintf(name_buff, sizeof(name_buff), "ypm/plugins/%s", name);
+
+    YEXE("plugin-load", name_buff);
+}
+
+static void do_plugin_unload(char *name) {
+    char name_buff[512];
+
+    snprintf(name_buff, sizeof(name_buff), "ypm/plugins/%s", name);
+
+    YEXE("plugin-unload", name_buff);
+}
+
+
 static void load_all_from_list(void) {
     array_t   plugs;
     char      path[4096];
@@ -745,7 +763,7 @@ static void load_all_from_list(void) {
     }
 
     array_traverse(plugs, it) {
-        YEXE("plugin-load", *it);
+        do_plugin_load(*it);
     }
 
     free_string_array(plugs);
@@ -793,6 +811,16 @@ out:;
     free_string_array(search_words);
 
     return match;
+}
+
+static int plug_name_cmp(const void *_a, const void *_b) {
+    const plugin *a;
+    const plugin *b;
+
+    a = _a;
+    b = _b;
+
+    return strcmp(a->plugin_name, b->plugin_name);
 }
 
 static void draw_list(void) {
@@ -874,6 +902,8 @@ static void draw_list(void) {
     LOG_EXIT();
     yed_buff_insert_string_no_undo(buff, line_buff, start_row, 1);
 
+    qsort(array_data(plugs), array_len(plugs), sizeof(plugin), plug_name_cmp);
+
     array_traverse(plugs, it) {
         start_row++;
         plugin_line[0] = 0;
@@ -892,9 +922,7 @@ static void draw_list(void) {
 
     list_len = array_len(plugs);
 
-/*     if (list_len == 0) { */
-        yed_buffer_add_line_no_undo(buff);
-/*     } */
+    yed_buffer_add_line_no_undo(buff);
 
     internal_mod_off(buff);
     mod_norecurse = 0;
@@ -935,16 +963,61 @@ static void draw_menu(void) {
     draw_list();
 }
 
-static void update_callback(void *arg) {
-    plugin *pit;
 
-    YEXE("echo", "update finished");
-    draw_list();
+static long long update_count;
 
+typedef struct {
+    long long  count;
+    char      *name;
+} update_install_arg;
+
+static void update_install_callback(void *_arg) {
+    update_install_arg *arg;
+    char                buff[512];
+
+    arg = _arg;
+
+LOG_CMD_ENTER("ypm");
+
+    do_plugin_load(arg->name);
+
+    if (arg->count == update_count) {
+        yed_cprint("update finished");
+        draw_list();
+        YEXE("buffer", "*ypm-menu");
+    } else {
+        yed_cprint("updated plugin %d/%d", arg->count, update_count);
+    }
+
+LOG_EXIT();
+}
+
+static void update_callback(void *_arg) {
+    int                 doing_install;
+    plugin             *pit;
+    char                buff[512];
+    update_install_arg *arg;
+
+    doing_install = 0;
+    update_count  = 0;
     array_traverse(plugin_arr, pit) {
         if (pit->installed) {
-            YEXE("ypm-install", pit->plugin_name);
+            doing_install  = 1;
+            update_count  += 1;
+            snprintf(buff, sizeof(buff), "PLUGIN='%s' bash %s 2>&1", pit->plugin_name, install_script_path);
+            arg = malloc(sizeof(*arg));
+            arg->count = update_count;
+            arg->name  = strdup(pit->plugin_name);
+            add_bg_task(buff, update_install_callback, (void*)arg);
         }
+    }
+
+    if (!doing_install) {
+LOG_CMD_ENTER("ypm");
+        yed_cprint("update finished");
+LOG_EXIT();
+        draw_list();
+        YEXE("buffer", "*ypm-menu");
     }
 }
 
@@ -1002,7 +1075,7 @@ static void install_callback(void *arg) {
 
     free_string_array(plugs);
 
-    YEXE("plugin-load", (char*)arg);
+    do_plugin_load(plug_name);
     free(arg);
 
     draw_list();
@@ -1062,7 +1135,7 @@ static void uninstall_callback(void *arg) {
 
     free_string_array(plugs);
 
-    YEXE("plugin-unload", (char*)arg);
+    do_plugin_unload(plug_name);
     free(arg);
 
     draw_list();
@@ -1263,11 +1336,6 @@ static void start_search(void) {
 }
 
 static void go_first_line(void) {
-/*     internal_mod_on(get_or_make_buffer("ypm-menu")); */
-/*     while (yed_buff_n_lines(get_or_make_buffer("ypm-menu")) < 19) { */
-/*         yed_buffer_add_line_no_undo(get_or_make_buffer("ypm-menu")); */
-/*     } */
-/*     internal_mod_off(get_or_make_buffer("ypm-menu")); */
     cursor_no_recurse = 1;
     yed_set_cursor_within_frame(ys->active_frame, 19, 1);
     cursor_no_recurse = 0;
@@ -1433,6 +1501,8 @@ static void line_handler(yed_event *event) {
                     attr.bg = 0;
                     if (attr.flags & ATTR_RGB) {
                         attr.fg = RGB_32(0x0, 0x7f, 0x0);
+                    } else if (attr.flags & ATTR_256) {
+                        attr.fg = 34;
                     } else {
                         attr.fg = ATTR_16_GREEN;
                     }
@@ -1600,16 +1670,11 @@ LOG_CMD_ENTER("ypm");
                             plug_row = ys->active_frame->cursor_line;
                             do_uninstall(plug_name);
                             break;
-/*                         case 3: */
-/*                             from_menu = 1; */
-/*                             plug_row = ys->active_frame->cursor_line; */
-/*                             do_update(); */
-/*                             break; */
                         case 3:
-                            YEXE("plugin-load", plug_name);
+                            do_plugin_load(plug_name);
                             break;
                         case 4:
-                            YEXE("plugin-unload", plug_name);
+                            do_plugin_unload(plug_name);
                             break;
                     }
                 } else {
