@@ -661,7 +661,7 @@ static void fill_plugin_arr(void) {
     free_string_array(listed_plugins);
     listed_plugins = array_make(char*);
 
-    abs_path("~/.yed/ypm/ypm_list", path);
+    abs_path("~/.yed/ypm_list", path);
     f = fopen(path, "r");
 
     if (f == NULL) { return; }
@@ -747,7 +747,7 @@ static void load_all_from_list(void) {
 
     plugs = array_make(char*);
 
-    abs_path("~/.yed/ypm/ypm_list", path);
+    abs_path("~/.yed/ypm_list", path);
     f = fopen(path, "r");
 
     if (f != NULL) {
@@ -1047,7 +1047,7 @@ static void install_callback(void *arg) {
 
     plugs = array_make(char*);
 
-    abs_path("~/.yed/ypm/ypm_list", path);
+    abs_path("~/.yed/ypm_list", path);
     f = fopen(path, "r");
 
     if (f != NULL) {
@@ -1110,7 +1110,7 @@ static void uninstall_callback(void *arg) {
 
     plugs = array_make(char*);
 
-    abs_path("~/.yed/ypm/ypm_list", path);
+    abs_path("~/.yed/ypm_list", path);
     f = fopen(path, "r");
 
     if (f != NULL) {
