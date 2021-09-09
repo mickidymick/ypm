@@ -1685,7 +1685,7 @@ LOG_CMD_ENTER("ypm");
                 } else {
                     if (list_len > 0) {
                         popup.size = array_len(popup_items);
-                        if (ys->active_frame->cur_y + popup.size > ys->term_rows - 2) {
+                        if (ys->active_frame->cur_y + popup.size >= ys->active_frame->top + ys->active_frame->height) {
                             popup.row = ys->active_frame->cur_y - popup.size - 1;
                         } else {
                             popup.row = ys->active_frame->cur_y;
