@@ -35,7 +35,6 @@ static yed_plugin       *SELF;
 static char              update_script_path[256];
 static char              install_script_path[256];
 static char              uninstall_script_path[256];
-static char              upgrade_script_path[256];
 static array_t           tasks;
 static array_t           plugin_arr;
 static yed_event_handler h_pump;
@@ -113,7 +112,7 @@ int yed_plugin_boot(yed_plugin *self) {
     int   manpath_len;
     int   manpath_status;
     char *manpath;
-    char  ypm_manpath[4096];
+    char *ypm_manpath;
     char  new_manpath[4096];
     int   ret;
 
@@ -195,7 +194,7 @@ int yed_plugin_boot(yed_plugin *self) {
         manpath = NULL;
     }
 
-    abs_path("~/.yed/ypm/man", ypm_manpath);
+    ypm_manpath = get_config_item_path("ypm/man");
 
     if (manpath == NULL) {
         setenv("MANPATH", ypm_manpath, 1);
@@ -203,13 +202,15 @@ int yed_plugin_boot(yed_plugin *self) {
         if (strncmp(manpath, ypm_manpath, strlen(ypm_manpath)) != 0) {
             LOG_CMD_ENTER("ypm");
             ret = snprintf(new_manpath, sizeof(new_manpath)-1, "%s:%s", ypm_manpath, manpath);
-            if(ret < 0) {
+            if (ret < 0) {
                 yed_cerr("item_path was truncated!");
             }
             LOG_EXIT();
             setenv("MANPATH", new_manpath, 1);
         }
     }
+
+    free(ypm_manpath);
 
     if (manpath != NULL) { free(manpath); }
 
@@ -336,7 +337,7 @@ version ? "YPM is out of date." : "YPM has not been initialized.";
 
 static void check_ypm_version(void) {
     int   version;
-    char  readme_path[512];
+    char *readme_path;
     char  line[512];
     char *s;
     char *item;
@@ -344,7 +345,7 @@ static void check_ypm_version(void) {
 
     version = 0;
 
-    abs_path("~/.yed/ypm/README.md", readme_path);
+    readme_path = get_config_item_path("ypm/README.md");
 
     f = fopen(readme_path, "r");
     if (f != NULL) {
@@ -358,6 +359,8 @@ static void check_ypm_version(void) {
         }
         fclose(f);
     }
+
+    free(readme_path);
 
     if ((YED_VERSION / 100) != (version / 100)) {
         create_update_menu(version);
@@ -387,26 +390,26 @@ static int plug_name_compl(char *str, struct yed_completion_results_t *comp_res)
 
 static const char *update_script =
 "#!/usr/bin/env bash\n"
-"if ! [ -d ~/.yed/ypm ]; then\n"
-"    git clone https://github.com/mickidymick/ypm_plugins ~/.yed/ypm\n"
+"if ! [ -d %s/ypm ]; then\n"
+"    git clone https://github.com/mickidymick/ypm_plugins %s/ypm\n"
 "    if ! [ $? ]; then\n"
 "        echo 'Clone failed.'\n"
 "        exit 1\n"
 "    else\n"
-"        mkdir ~/.yed/ypm/plugins\n"
+"        mkdir %s/ypm/plugins\n"
 "        echo \"Cloned plugins repo.\"\n"
 "        echo \"Done.\"\n"
 "    fi\n"
 "else\n"
-"    cd ~/.yed/ypm\n"
+"    cd %s/ypm\n"
 "    git pull || exit $?\n"
 "    echo \"Done.\"\n"
 "fi\n";
 
 static const char *install_script =
 "#!/usr/bin/env bash\n"
-"if [ -d ~/.yed/ypm ] && [ ! -z $PLUGIN ]; then\n"
-"    cd ~/.yed/ypm/ypm_plugins\n"
+"if [ -d %s/ypm ] && [ ! -z $PLUGIN ]; then\n"
+"    cd %s/ypm/ypm_plugins\n"
 "    git submodule init $PLUGIN\n"
 "    if ! [ $? ]; then\n"
 "        echo 'Init failed.'\n"
@@ -429,17 +432,17 @@ static const char *install_script =
 "    else\n"
 "        echo $PLUGIN' built.'\n"
 "    fi\n"
-"    mkdir -p ~/.yed/ypm/plugins/$(dirname $PLUGIN)\n"
-"    mv $(basename $PLUGIN.so) ~/.yed/ypm/plugins/${PLUGIN}.so.new\n"
-"    mv ~/.yed/ypm/plugins/${PLUGIN}.so.new ~/.yed/ypm/plugins/${PLUGIN}.so\n"
+"    mkdir -p %s/ypm/plugins/$(dirname $PLUGIN)\n"
+"    mv $(basename $PLUGIN.so) %s/ypm/plugins/${PLUGIN}.so.new\n"
+"    mv %s/ypm/plugins/${PLUGIN}.so.new %s/ypm/plugins/${PLUGIN}.so\n"
 "else\n"
 "    echo 'Run ypm-update.'\n"
 "fi\n";
 
 static const char *uninstall_script =
 "#!/usr/bin/env bash\n"
-"if [ -d ~/.yed/ypm ] && [ ! -z $PLUGIN ]; then\n"
-"    cd ~/.yed/ypm/ypm_plugins\n"
+"if [ -d %s/ypm ] && [ ! -z $PLUGIN ]; then\n"
+"    cd %s/ypm/ypm_plugins\n"
 "    git submodule deinit -f $PLUGIN || exit $?\n"
 "    if ! [ $? ]; then\n"
 "        echo 'Deinit failed.'\n"
@@ -447,7 +450,7 @@ static const char *uninstall_script =
 "    else\n"
 "        echo $PLUGIN' deinitialized.'\n"
 "    fi\n"
-"    rm ~/.yed/ypm/plugins/${PLUGIN}.so\n"
+"    rm %s/ypm/plugins/${PLUGIN}.so\n"
 "    if ! [ $? ]; then\n"
 "        echo 'rm failed.'\n"
 "        exit 1\n"
@@ -467,21 +470,33 @@ static void setup_shell_scripts(void) {
     snprintf(update_script_path,    sizeof(buff), "/tmp/ypm-update-%s.sh",    user);
     snprintf(install_script_path,   sizeof(buff), "/tmp/ypm-install-%s.sh",   user);
     snprintf(uninstall_script_path, sizeof(buff), "/tmp/ypm-uninstall-%s.sh", user);
-    snprintf(upgrade_script_path,   sizeof(buff), "/tmp/ypm-upgrade-%s.sh",   user);
 
     f = fopen(update_script_path, "w");
     if (f == NULL) { goto out; }
-    fwrite(update_script, 1, strlen(update_script), f);
+    fprintf(f, update_script,
+            get_config_path(),
+            get_config_path(),
+            get_config_path(),
+            get_config_path());
     fclose(f);
 
     f = fopen(install_script_path, "w");
     if (f == NULL) { goto out; }
-    fwrite(install_script, 1, strlen(install_script), f);
+    fprintf(f, install_script,
+            get_config_path(),
+            get_config_path(),
+            get_config_path(),
+            get_config_path(),
+            get_config_path(),
+            get_config_path());
     fclose(f);
 
     f = fopen(uninstall_script_path, "w");
     if (f == NULL) { goto out; }
-    fwrite(uninstall_script, 1, strlen(uninstall_script), f);
+    fprintf(f, uninstall_script,
+            get_config_path(),
+            get_config_path(),
+            get_config_path());
     fclose(f);
 
 out:;
@@ -526,7 +541,7 @@ static void add_plugin_to_arr(const char *ab_path, const char *rel_path, int ins
     struct stat                                    st;
     const char                                    *just_name;
     tree_it(yed_plugin_name_t, yed_plugin_ptr_t)   pit;
-    char                                           man_dir_path[2048];
+    char                                          *man_dir_path;
     char                                           man_path[4096];
     char                                           name_copy[512];
     char                                          *s;
@@ -575,7 +590,7 @@ static void add_plugin_to_arr(const char *ab_path, const char *rel_path, int ins
     plug.keywords = array_make(char *);
     s = strdup(plug.plugin_name);
     array_push(plug.keywords, s);
-    abs_path("~/.yed/ypm/man/man7", man_dir_path);
+    man_dir_path = get_config_item_path("ypm/man/man7");
     if (strncmp(plug.plugin_name, "styles/", strlen("styles/")) == 0) {
         snprintf(name_copy, sizeof(name_copy), "style-%s", plug.plugin_name + strlen("styles/"));
     } else {
@@ -584,6 +599,8 @@ static void add_plugin_to_arr(const char *ab_path, const char *rel_path, int ins
     s = name_copy;
     while (*s) { if (*s == '/') { *s = '-'; } s += 1; }
     snprintf(man_path, sizeof(man_path), "%s/%s.7", man_dir_path, name_copy);
+
+    free(man_dir_path);
 
     f = fopen(man_path, "r");
     if (f != NULL) {
@@ -643,7 +660,7 @@ static void clear_plugin_arr(void) {
 
 static void fill_plugin_arr(void) {
     array_t   listed_plugins;
-    char      path[4096];
+    char     *path;
     FILE     *f;
     char      line[512];
     char     *cpy;
@@ -655,7 +672,7 @@ static void fill_plugin_arr(void) {
 
     listed_plugins = array_make(char*);
 
-    abs_path("~/.yed/ypm_list", path);
+    path = get_config_item_path("ypm_list");
     f = fopen(path, "r");
 
     if (f != NULL) {
@@ -671,10 +688,12 @@ static void fill_plugin_arr(void) {
         fclose(f);
     }
 
+    free(path);
+
 
     clear_plugin_arr();
 
-    abs_path("~/.yed/ypm/.gitmodules", path);
+    path = get_config_item_path("ypm/.gitmodules");
     f = fopen(path, "r");
 
     if (f != NULL) {
@@ -684,8 +703,9 @@ static void fill_plugin_arr(void) {
                 s = plug_path;
                 while (*s && *s != '"') { s += 1; } *s = 0;
 
-                abs_path("~/.yed/ypm/ypm_plugins", plug_full_path);
-                strcat(plug_full_path, "/");
+                plug_full_path[0] = 0;
+                strcat(plug_full_path, get_config_path());
+                strcat(plug_full_path, "/ypm/ypm_plugins/");
                 strcat(plug_full_path, plug_path);
 
                 installed = 0;
@@ -702,6 +722,8 @@ static void fill_plugin_arr(void) {
 
         fclose(f);
     }
+
+    free(path);
 
     free_string_array(listed_plugins);
 }
@@ -743,7 +765,7 @@ static void do_plugin_unload(char *name) {
 
 static void load_all_from_list(void) {
     array_t   plugs;
-    char      path[4096];
+    char     *path;
     FILE     *f;
     char      line[512];
     char     *s;
@@ -751,7 +773,7 @@ static void load_all_from_list(void) {
 
     plugs = array_make(char*);
 
-    abs_path("~/.yed/ypm_list", path);
+    path = get_config_item_path("ypm_list");
     f = fopen(path, "r");
 
     if (f != NULL) {
@@ -765,6 +787,8 @@ static void load_all_from_list(void) {
         }
         fclose(f);
     }
+
+    free(path);
 
     array_traverse(plugs, it) {
         do_plugin_load(*it);
@@ -1042,7 +1066,7 @@ static void do_update(void) {
 static void install_callback(void *arg) {
     char     *plug_name;
     array_t   plugs;
-    char      path[4096];
+    char     *path;
     FILE     *f;
     char      line[512];
     char     *s;
@@ -1052,7 +1076,7 @@ static void install_callback(void *arg) {
 
     plugs = array_make(char*);
 
-    abs_path("~/.yed/ypm_list", path);
+    path = get_config_item_path("ypm_list");
     f = fopen(path, "r");
 
     if (f != NULL) {
@@ -1077,6 +1101,8 @@ static void install_callback(void *arg) {
         }
         fclose(f);
     }
+
+    free(path);
 
     free_string_array(plugs);
 
@@ -1105,7 +1131,7 @@ static void do_install(const char *plug_name) {
 static void uninstall_callback(void *arg) {
     char     *plug_name;
     array_t   plugs;
-    char      path[4096];
+    char     *path;
     FILE     *f;
     char      line[512];
     char     *s;
@@ -1115,7 +1141,7 @@ static void uninstall_callback(void *arg) {
 
     plugs = array_make(char*);
 
-    abs_path("~/.yed/ypm_list", path);
+    path = get_config_item_path("ypm_list");
     f = fopen(path, "r");
 
     if (f != NULL) {
@@ -1137,6 +1163,8 @@ static void uninstall_callback(void *arg) {
         }
         fclose(f);
     }
+
+    free(path);
 
     free_string_array(plugs);
 
