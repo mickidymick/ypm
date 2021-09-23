@@ -1014,7 +1014,7 @@ LOG_CMD_ENTER("ypm");
         draw_list();
         YEXE("buffer", "*ypm-menu");
     } else {
-        yed_cprint("updated plugin %ll/%ll", arg->count, update_count);
+        yed_cprint("updated plugin %lld/%lld", arg->count, update_count);
     }
 
 LOG_EXIT();
