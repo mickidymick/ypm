@@ -1290,8 +1290,7 @@ static void open_man_page(const char *page) {
     strcat(cmd_buff, " >/dev/null");
 
 
-    snprintf(cmd_buff, sizeof(cmd_buff),
-             "bash -c '", width);
+    snprintf(cmd_buff, sizeof(cmd_buff), "bash -c '");
     strcat(cmd_buff, pre_cmd_buff);
     strcat(cmd_buff, "'");
 
