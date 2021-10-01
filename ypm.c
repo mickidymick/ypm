@@ -1284,24 +1284,25 @@ static void open_man_page(const char *page) {
     pre_cmd_buff[0] = 0;
     cmd_buff[0]     = 0;
 
-#ifdef __APPLE__
     snprintf(pre_cmd_buff, sizeof(pre_cmd_buff), "man 7 %s | col -bx; exit ${PIPESTATUS[0]} 2>/dev/null", page_copy);
-#else
-    snprintf(pre_cmd_buff, sizeof(pre_cmd_buff), "man --ascii 7 %s 2>/dev/null", page_copy);
-#endif
 
     strcat(cmd_buff, pre_cmd_buff);
     strcat(cmd_buff, " >/dev/null");
 
-    if ((stream = popen(cmd_buff, "r")) == NULL) {
-        yed_cerr("failed to invoke '%s'", cmd_buff);
-        return;
-    }
-    status = pclose(stream);
-    if (status) {
+
+    snprintf(cmd_buff, sizeof(cmd_buff),
+             "bash -c '", width);
+    strcat(cmd_buff, pre_cmd_buff);
+    strcat(cmd_buff, "'");
+
+    yed_run_subproc(cmd_buff, NULL, &status);
+
+    if (status != 0) {
+        yed_cerr("command '%s' failed", pre_cmd_buff);
         return;
     }
 
+    YEXE("special-buffer-prepare-focus", "*man-page");
     if (ys->active_frame != NULL) {
         width = ys->active_frame->width;
     } else {
