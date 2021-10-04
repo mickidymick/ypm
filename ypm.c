@@ -1275,8 +1275,8 @@ static void open_man_page(const char *page) {
     int   width;
     char  pre_cmd_buff[1024];
     char  cmd_buff[1024];
+    char *output;
     int   status;
-    FILE *stream;
 
     snprintf(page_copy, sizeof(page_copy), "%s", page);
     for (s = page_copy; *s; s += 1) { if (*s == '/') { *s = '-'; } }
@@ -1294,7 +1294,9 @@ static void open_man_page(const char *page) {
     strcat(cmd_buff, pre_cmd_buff);
     strcat(cmd_buff, "'");
 
-    yed_run_subproc(cmd_buff, NULL, &status);
+    output = yed_run_subproc(cmd_buff, NULL, &status);
+
+    if (output != NULL) { free(output); }
 
     if (status != 0) {
         yed_cerr("command '%s' failed", pre_cmd_buff);
