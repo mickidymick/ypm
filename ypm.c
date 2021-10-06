@@ -586,7 +586,7 @@ static void add_plugin_to_arr(const char *ab_path, const char *rel_path, int ins
         plug.loaded = 1;
     }
 
-    //version / keywords
+    //Dir path name
     plug.keywords = array_make(char *);
     s = strdup(plug.plugin_name);
     array_push(plug.keywords, s);
@@ -602,6 +602,7 @@ static void add_plugin_to_arr(const char *ab_path, const char *rel_path, int ins
 
     free(man_dir_path);
 
+    //version / keywords
     f = fopen(man_path, "r");
     if (f != NULL) {
         while (fgets(line, sizeof(line), f) != NULL) {
@@ -1275,16 +1276,23 @@ static void open_man_page(const char *page) {
     int   width;
     char  pre_cmd_buff[1024];
     char  cmd_buff[1024];
+    char  name_copy[512];
     char *output;
     int   status;
 
     snprintf(page_copy, sizeof(page_copy), "%s", page);
     for (s = page_copy; *s; s += 1) { if (*s == '/') { *s = '-'; } }
 
+    if (strncmp(page_copy, "styles-", strlen("styles-")) == 0) {
+        snprintf(name_copy, sizeof(name_copy), "style-%s", page_copy + strlen("styles-"));
+    } else {
+        snprintf(name_copy, sizeof(name_copy), "%s", page_copy);
+    }
+
     pre_cmd_buff[0] = 0;
     cmd_buff[0]     = 0;
 
-    snprintf(pre_cmd_buff, sizeof(pre_cmd_buff), "man 7 %s | col -bx; exit ${PIPESTATUS[0]} 2>/dev/null", page_copy);
+    snprintf(pre_cmd_buff, sizeof(pre_cmd_buff), "man 7 %s | col -bx; exit ${PIPESTATUS[0]} 2>/dev/null", name_copy);
 
     strcat(cmd_buff, pre_cmd_buff);
     strcat(cmd_buff, " >/dev/null");
