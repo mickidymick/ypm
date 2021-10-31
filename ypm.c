@@ -188,6 +188,9 @@ int yed_plugin_boot(yed_plugin *self) {
     yed_plugin_set_completion(self, "ypm-update-compl-arg-0",    plug_name_compl);
 
 
+    yed_set_var("ypm-is-updating","NO");
+
+
     manpath = yed_run_subproc("manpath", &manpath_len, &manpath_status);
     if (manpath_status != 0) {
         if (manpath != NULL) { free(manpath); }
@@ -1012,6 +1015,7 @@ LOG_CMD_ENTER("ypm");
 
     if (arg->count == update_count) {
         yed_cprint("update finished");
+        yed_set_var("ypm-is-updating","NO");
         draw_list();
         YEXE("buffer", "*ypm-menu");
     } else {
@@ -1044,6 +1048,7 @@ static void update_callback(void *_arg) {
     }
 
     if (!doing_install) {
+        yed_set_var("ypm-is-updating","NO");
 LOG_CMD_ENTER("ypm");
         yed_cprint("update finished");
 LOG_EXIT();
@@ -1061,6 +1066,7 @@ static void do_update(void) {
 
     snprintf(buff, sizeof(buff), "bash %s 2>&1", update_script_path);
 
+    yed_set_var("ypm-is-updating","YES");
     add_bg_task(buff, update_callback, NULL);
 }
 
