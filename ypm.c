@@ -405,7 +405,7 @@ static const char *fetch_script =
 static const char *update_script =
 "#!/usr/bin/env bash\n"
 "if ! [ -d %s/ypm ]; then\n"
-"    git clone https://github.com/mickidymick/ypm_plugins %s/ypm\n"
+"    git clone https://github.com/your-editor/ypm-plugins %s/ypm\n"
 "    if ! [ $? ]; then\n"
 "        echo 'Clone failed.'\n"
 "        exit 1\n"
