@@ -349,17 +349,19 @@ static void check_ypm_version(void) {
     int   output_len;
     int   status;
 
-    version = -1;
+    version = 0;
 
     snprintf(cmd, sizeof(cmd), "cd %s/ypm && git rev-parse --abbrev-ref HEAD", get_config_path());
     output = yed_run_subproc(cmd, &output_len, &status);
     if (output != NULL && strlen(output) != 0 && status == 0) {
-        version = s_to_i(output);
+        if (!sscanf(output, "%d", &version)) {
+            version = 0;
+        }
     }
 
     if (version == -1) {
         LOG_FN_ENTER();
-        yed_log("[!] failed trying to run 'git rev-parse --abbrev-ref HEAD'! Do you have git installed?");
+        yed_log("[!] failed trying to run '%s'! Do you have git installed?", cmd);
         LOG_EXIT();
     } else {
         if ((YED_VERSION / 100) != (version / 100)) {
