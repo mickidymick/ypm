@@ -353,7 +353,7 @@ static void check_ypm_version(void) {
 
     snprintf(cmd, sizeof(cmd), "cd %s/ypm && git rev-parse --abbrev-ref HEAD", get_config_path());
     output = yed_run_subproc(cmd, &output_len, &status);
-    if (output != NULL && status == 0) {
+    if (output != NULL && strlen(output) != 0 && status == 0) {
         version = s_to_i(output);
     }
 
@@ -414,8 +414,8 @@ static const char *update_script =
 "    fi\n"
 "else\n"
 "    cd %s/ypm\n"
-"    git checkout " YED_MAJOR_VERSION_STR " || exit $?\n"
 "    git pull || exit $?\n"
+"    git checkout " YED_MAJOR_VERSION_STR " || exit $?\n"
 "    echo \"Done.\"\n"
 "fi\n";
 
