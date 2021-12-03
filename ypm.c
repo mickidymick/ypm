@@ -32,6 +32,7 @@ typedef struct {
 } background_task;
 
 static yed_plugin       *SELF;
+static char              fetch_script_path[256];
 static char              update_script_path[256];
 static char              install_script_path[256];
 static char              uninstall_script_path[256];
@@ -67,6 +68,7 @@ static void ypm_help(int n_args, char **args);
 static void ypm_install(int n_args, char **args);
 static void ypm_uninstall(int n_args, char **args);
 static void ypm_update(int n_args, char **args);
+static void ypm_fetch(int n_args, char **args);
 
 /* Internal functions: */
 static int         plug_name_compl(char *str, struct yed_completion_results_t *comp_res);
@@ -84,6 +86,8 @@ static void        draw_list(void);
 static void        draw_menu(void);
 static void        update_callback(void *arg);
 static void        do_update(void);
+static void        fetch_callback(void *arg);
+static void        do_fetch(void);
 static void        install_callback(void *arg);
 static void        do_install(const char *plug_name);
 static void        uninstall_callback(void *arg);
@@ -177,9 +181,9 @@ int yed_plugin_boot(yed_plugin *self) {
     h_post_mod.fn   = post_mod_handler;
     yed_plugin_add_event_handler(self, h_post_mod);
 
+    yed_plugin_set_command(self, "ypm-fetch",     ypm_fetch);
     yed_plugin_set_command(self, "ypm-update",    ypm_update);
     yed_plugin_set_command(self, "ypm-menu",      ypm_menu);
-    yed_plugin_set_command(self, "ypm-help",      ypm_help);
     yed_plugin_set_command(self, "ypm-install",   ypm_install);
     yed_plugin_set_command(self, "ypm-uninstall", ypm_uninstall);
 
@@ -188,7 +192,7 @@ int yed_plugin_boot(yed_plugin *self) {
     yed_plugin_set_completion(self, "ypm-update-compl-arg-0",    plug_name_compl);
 
 
-    yed_set_var("ypm-is-updating","NO");
+    yed_set_var("ypm-is-updating", "NO");
 
 
     manpath = yed_run_subproc("manpath", &manpath_len, &manpath_status);
@@ -220,11 +224,15 @@ int yed_plugin_boot(yed_plugin *self) {
     return 0;
 }
 
-void ypm_require(int n_args, char **args) {
-    if (n_args != 1) {
-        yed_cerr("expected 1 argument, but got %d", n_args);
+void ypm_fetch(int n_args, char **args) {
+    if (n_args != 0) {
+        yed_cerr("expected 0 arguments, but got %d", n_args);
         return;
     }
+
+    YEXE("special-buffer-prepare-focus", "*ypm-output");
+
+    do_fetch();
 }
 
 void ypm_update(int n_args, char **args) {
@@ -242,10 +250,6 @@ void ypm_menu(int n_args, char **args) {
     draw_menu();
     YEXE("special-buffer-prepare-focus", "*ypm-menu");
     YEXE("buffer", "*ypm-menu");
-}
-
-void ypm_help(int n_args, char **args) {
-
 }
 
 void ypm_install(int n_args, char **args) {
@@ -340,33 +344,27 @@ version ? "YPM is out of date." : "YPM has not been initialized.";
 
 static void check_ypm_version(void) {
     int   version;
-    char *readme_path;
-    char  line[512];
-    char *s;
-    char *item;
-    FILE *f;
+    char  cmd[1024];
+    char *output;
+    int   output_len;
+    int   status;
 
-    version = 0;
+    version = -1;
 
-    readme_path = get_config_item_path("ypm/README.md");
-
-    f = fopen(readme_path, "r");
-    if (f != NULL) {
-        if (fgets(line, sizeof(line), f) != NULL) {
-            if (fgets(line, sizeof(line), f) != NULL) {
-                strtok(line, " ");
-                strtok(NULL, " ");
-                s = strtok(NULL, "\n");
-                version = atoi(s);
-            }
-        }
-        fclose(f);
+    snprintf(cmd, sizeof(cmd), "cd %s/ypm && git rev-parse --abbrev-ref HEAD", get_config_path());
+    output = yed_run_subproc(cmd, &output_len, &status);
+    if (output != NULL && status == 0) {
+        version = s_to_i(output);
     }
 
-    free(readme_path);
-
-    if ((YED_VERSION / 100) != (version / 100)) {
-        create_update_menu(version);
+    if (version == -1) {
+        LOG_FN_ENTER();
+        yed_log("[!] failed trying to run 'git rev-parse --abbrev-ref HEAD'! Do you have git installed?");
+        LOG_EXIT();
+    } else {
+        if ((YED_VERSION / 100) != (version / 100)) {
+            create_update_menu(version);
+        }
     }
 }
 
@@ -391,6 +389,17 @@ static int plug_name_compl(char *str, struct yed_completion_results_t *comp_res)
 
 /* Inline BASH Scripts */
 
+static const char *fetch_script =
+"#!/usr/bin/env bash\n"
+"if ! [ -d %s/ypm ]; then\n"
+"    echo 'YPM not found. Please run ypm-update.'\n"
+"    exit 1\n"
+"else\n"
+"    cd %s/ypm\n"
+"    git pull || exit $?\n"
+"    echo \"Done.\"\n"
+"fi\n";
+
 static const char *update_script =
 "#!/usr/bin/env bash\n"
 "if ! [ -d %s/ypm ]; then\n"
@@ -405,6 +414,7 @@ static const char *update_script =
 "    fi\n"
 "else\n"
 "    cd %s/ypm\n"
+"    git checkout " YED_MAJOR_VERSION_STR " || exit $?\n"
 "    git pull || exit $?\n"
 "    echo \"Done.\"\n"
 "fi\n";
@@ -470,9 +480,17 @@ static void setup_shell_scripts(void) {
     user = getenv("USER");
     if (user == NULL) { user = ""; }
 
+    snprintf(fetch_script_path,     sizeof(buff), "/tmp/ypm-fetch-%s.sh",     user);
     snprintf(update_script_path,    sizeof(buff), "/tmp/ypm-update-%s.sh",    user);
     snprintf(install_script_path,   sizeof(buff), "/tmp/ypm-install-%s.sh",   user);
     snprintf(uninstall_script_path, sizeof(buff), "/tmp/ypm-uninstall-%s.sh", user);
+
+    f = fopen(fetch_script_path, "w");
+    if (f == NULL) { goto out; }
+    fprintf(f, fetch_script,
+            get_config_path(),
+            get_config_path());
+    fclose(f);
 
     f = fopen(update_script_path, "w");
     if (f == NULL) { goto out; }
@@ -632,15 +650,13 @@ static void add_plugin_to_arr(const char *ab_path, const char *rel_path, int ins
                 }
             } else if (strstr(line, "NAME") != NULL) {
                 if (fgets(line, sizeof(line), f) != NULL) {
-                    s = strtok(line, "\\- ");
+                    s = strstr(line, "\\- ");
                     if (s != NULL) {
-                        s = strtok(NULL, "");
-                        if (s != NULL) {
-                            if (s[strlen(s)-1] == '\n') {
-                                s[strlen(s)-1] = 0;
-                            }
-                            plug.plugin_description = strdup(s + 3);
+                        s += strlen("\\- ");
+                        if (s[strlen(s)-1] == '\n') {
+                            s[strlen(s)-1] = 0;
                         }
+                        plug.plugin_description = strdup(s);
                     }
                 }
             }
@@ -863,7 +879,7 @@ static void draw_list(void) {
     int         start_row;
     int         max_width;
     int         max_desc_width;
-    char        line_buff[512];
+    char        line_buff[1024];
     int         col_2_width;
     int         col_3_width;
     int         i;
@@ -871,7 +887,6 @@ static void draw_list(void) {
     char        dash2_buff[128];
     char        dash3_buff[512];
     char        plugin_line[512];
-    int         ret;
 
     buff      = get_or_make_buffer("ypm-menu");
     start_row = 17;
@@ -897,14 +912,14 @@ static void draw_list(void) {
 
 
     array_traverse(plugin_arr, it) {
-        max_width = MAX(max_width, strlen(it->plugin_name));
+        max_width = MAX(max_width, yed_get_string_width(it->plugin_name));
         if (it->plugin_description != NULL) {
-            max_desc_width = MAX(max_desc_width, strlen(it->plugin_description));
+            max_desc_width = MAX(max_desc_width, yed_get_string_width(it->plugin_description));
         }
     }
 
     col_2_width = 9;
-    col_3_width = MIN(sizeof(dash3_buff) - 1, max_desc_width + 1);
+    col_3_width = MIN((sizeof(dash3_buff) / strlen("─")) - 1, max_desc_width + 1);
     snprintf(line_buff, sizeof(line_buff), "%-*s │ %-*s │ %-*s │ %-*s│",
                         max_width,   "Plugin",
                         col_2_width, "Installed",
@@ -915,22 +930,19 @@ static void draw_list(void) {
     start_row += 1;
 
     dash1_buff[0] = 0;
-    for (i = 0; i < max_width + 1; i += 1) { strcat(dash1_buff, "─"); }
+    for (i = 0; i < max_width + 1; i += 1)   { strcat(dash1_buff, "─"); }
     dash2_buff[0] = 0;
     for (i = 0; i < col_2_width + 2; i += 1) { strcat(dash2_buff, "─"); }
     dash3_buff[0] = 0;
     for (i = 0; i < col_3_width + 1; i += 1) { strcat(dash3_buff, "─"); }
 
     LOG_CMD_ENTER("ypm");
-    ret = snprintf(line_buff, sizeof(line_buff), "%*s┼%*s┼%*s┼%*s┤",
+    snprintf(line_buff, sizeof(line_buff), "%*s┼%*s┼%*s┼%*s┤",
                         max_width + 1,   dash1_buff,
                         col_2_width + 2, dash2_buff,
                         col_2_width + 2, dash2_buff,
                         col_3_width + 1, dash3_buff
             );
-    if(ret < 0) {
-        yed_cerr("item_path was truncated!");
-    }
     LOG_EXIT();
     yed_buff_insert_string_no_undo(buff, line_buff, start_row, 1);
 
@@ -943,7 +955,7 @@ static void draw_list(void) {
                         max_width,   (*it).plugin_name,
                         ((*it).installed == 1) ? col_2_width+2 : col_2_width, ((*it).installed == 1) ? "\xE2\x9C\x93" : "X",
                         ((*it).loaded == 1) ? col_2_width+2 : col_2_width, ((*it).loaded == 1) ? "\xE2\x9C\x93" : "X",
-                        max_desc_width + 1, (*it).plugin_description
+                        max_desc_width + 1, (*it).plugin_description == NULL ? "<no description>" : (*it).plugin_description
                 );
         attr.flags = ATTR_16;
         attr.fg = ATTR_16_RED;
@@ -1025,6 +1037,13 @@ LOG_CMD_ENTER("ypm");
 LOG_EXIT();
 }
 
+static void fetch_callback(void *_arg) {
+    draw_list();
+
+    yed_cprint("fetch finished");
+    YEXE("buffer", "*ypm-menu");
+}
+
 static void update_callback(void *_arg) {
     int                 doing_install;
     plugin             *pit;
@@ -1054,6 +1073,19 @@ LOG_CMD_ENTER("ypm");
 LOG_EXIT();
         YEXE("buffer", "*ypm-menu");
     }
+}
+
+static void do_fetch(void) {
+    char buff[512];
+
+    YEXE("buffer", "*ypm-output");
+    if (ys->active_frame != NULL) {
+        yed_set_cursor_within_frame(ys->active_frame, 1, 1);
+    }
+
+    snprintf(buff, sizeof(buff), "bash %s 2>&1", fetch_script_path);
+
+    add_bg_task(buff, fetch_callback, NULL);
 }
 
 static void do_update(void) {
