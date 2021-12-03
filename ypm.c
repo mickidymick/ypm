@@ -410,6 +410,7 @@ static const char *update_script =
 "        echo 'Clone failed.'\n"
 "        exit 1\n"
 "    else\n"
+"        git checkout " YED_MAJOR_VERSION_STR " || exit $?\n"
 "        mkdir %s/ypm/plugins\n"
 "        echo \"Cloned plugins repo.\"\n"
 "        echo \"Done.\"\n"
