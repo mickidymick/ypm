@@ -411,7 +411,7 @@ static const char *update_script =
 "        exit 1\n"
 "    else\n"
 "        cd %s/ypm\n"
-"        git checkout " YED_MAJOR_VERSION_STR " || exit $?\n"
+"        git checkout -b " YED_MAJOR_VERSION_STR " -t origin/" YED_MAJOR_VERSION_STR " || exit $?\n"
 "        mkdir %s/ypm/plugins\n"
 "        echo \"Cloned plugins repo.\"\n"
 "        echo \"Done.\"\n"
@@ -419,7 +419,7 @@ static const char *update_script =
 "else\n"
 "    cd %s/ypm\n"
 "    git pull || exit $?\n"
-"    git checkout " YED_MAJOR_VERSION_STR " || exit $?\n"
+"    git checkout -b " YED_MAJOR_VERSION_STR " -t origin/" YED_MAJOR_VERSION_STR " || exit $?\n"
 "    echo \"Done.\"\n"
 "fi\n";
 
