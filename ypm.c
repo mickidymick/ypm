@@ -354,7 +354,7 @@ static void check_ypm_version(void) {
     snprintf(cmd, sizeof(cmd), "cd %s/ypm && git rev-parse --abbrev-ref HEAD", get_config_path());
     output = yed_run_subproc(cmd, &output_len, &status);
     if (output != NULL && strlen(output) != 0 && status == 0) {
-        if (!sscanf(output, "%d", &version)) {
+        if (!sscanf(output, "v%d", &version)) {
             version = 0;
         }
     }
@@ -411,7 +411,7 @@ static const char *update_script =
 "        exit 1\n"
 "    else\n"
 "        cd %s/ypm\n"
-"        git checkout -b " YED_MAJOR_VERSION_STR " -t origin/" YED_MAJOR_VERSION_STR " || exit $?\n"
+"        git checkout v" YED_MAJOR_VERSION_STR " || exit $?\n"
 "        mkdir %s/ypm/plugins\n"
 "        echo \"Cloned plugins repo.\"\n"
 "        echo \"Done.\"\n"
@@ -419,7 +419,7 @@ static const char *update_script =
 "else\n"
 "    cd %s/ypm\n"
 "    git pull || exit $?\n"
-"    git checkout -b " YED_MAJOR_VERSION_STR " -t origin/" YED_MAJOR_VERSION_STR " || exit $?\n"
+"    git checkout v" YED_MAJOR_VERSION_STR " || exit $?\n"
 "    echo \"Done.\"\n"
 "fi\n";
 
