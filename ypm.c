@@ -410,6 +410,7 @@ static const char *update_script =
 "        echo 'Clone failed.'\n"
 "        exit 1\n"
 "    else\n"
+"        cd %s/ypm\n"
 "        git checkout " YED_MAJOR_VERSION_STR " || exit $?\n"
 "        mkdir %s/ypm/plugins\n"
 "        echo \"Cloned plugins repo.\"\n"
@@ -498,6 +499,7 @@ static void setup_shell_scripts(void) {
     f = fopen(update_script_path, "w");
     if (f == NULL) { goto out; }
     fprintf(f, update_script,
+            get_config_path(),
             get_config_path(),
             get_config_path(),
             get_config_path(),
